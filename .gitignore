@@ -20,3 +20,17 @@ package-lock.json
 mise.toml
 
 .mcp.json
+
+# Internal / analysis docs (kept local, not pushed)
+Ycloud_comparison_over_whatsapp/
+MPS_changes/
+Introspection logs/
+caveats/
+
+# Nested UI — separate repository, do not push here
+open-bsp-ui/
+
+# Media / build artifacts
+*.mp4
+*.png
+openapi.json

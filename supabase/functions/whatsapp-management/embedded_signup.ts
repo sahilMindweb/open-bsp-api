@@ -36,6 +36,30 @@ async function getBusinessAccessToken(
   return (await response.json()).access_token;
 }
 
+// MPS: fetch a client's business token via the Multi-Partner Solution endpoint
+// (used when the signup is tied to a solution_id — the reseller/partner path).
+// Unlike getBusinessAccessToken (which exchanges a code using our app
+// credentials), this uses our master system token and the solution ID.
+async function getBusinessAccessTokenMPS(
+  solution_id: string,
+  business_id: string,
+  system_token: string,
+): Promise<string> {
+  const response = await fetch(
+    `https://graph.facebook.com/${API_VERSION}/${solution_id}/access_token?business_id=${business_id}`,
+    { headers: { Authorization: `Bearer ${system_token}` } },
+  );
+
+  if (!response.ok) {
+    throw new HTTPException(response.status as ContentfulStatusCode, {
+      message: "Could not get business access token via MPS",
+      cause: await response.json().catch(() => ({})),
+    });
+  }
+
+  return (await response.json()).data[0].access_token;
+}
+
 // Step 2
 async function postSubscribeToWebhooks(
   business_access_token: string,
@@ -198,6 +222,7 @@ export type SignupPayload = {
   flow_type?: "only_waba" | "new_phone_number" | "existing_phone_number";
   callback_url?: string;
   verify_token?: string;
+  solution_id?: string;
 };
 
 export async function performEmbeddedSignup(
@@ -267,11 +292,21 @@ export async function performEmbeddedSignup(
   };
 
   log.info("Step 1: Exchange the token code for a business token", ctx);
-  const business_access_token = await getBusinessAccessToken(
-    app_id,
-    app_secret,
-    payload.code,
-  );
+  // MPS (reseller) path: when a solution_id is present, fetch the client's
+  // business token via the Multi-Partner Solution endpoint using our master
+  // system token. Otherwise, fall back to the direct path (exchange the code
+  // with our app credentials).
+  const business_access_token = payload.solution_id
+    ? await getBusinessAccessTokenMPS(
+      payload.solution_id,
+      payload.business_id!,
+      Deno.env.get("SOLUTION_PARTNER_SYSTEM_USER_TOKEN")!,
+    )
+    : await getBusinessAccessToken(
+      app_id,
+      app_secret,
+      payload.code,
+    );
 
   log.info("Step 2: Subscribe to webhooks on the customer's WABA", ctx);
   await postSubscribeToWebhooks(

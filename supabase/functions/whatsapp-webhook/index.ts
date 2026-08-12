@@ -546,6 +546,189 @@ async function processMessage(request: Request): Promise<Response> {
     for (const { value, field } of entry.changes) {
       log.info(`WhatsApp ${field} payload`, value);
 
+      if (field === "account_update" && value.event === "PARTNER_ADDED") {
+        // MPS: a client onboarded via a multi-partner solution. The webhook
+        // carries the client's WABA, business portfolio, and our solution ID.
+        // We fetch the client's business token (MPS endpoint), find the
+        // reseller from the solution, auto-create the client org under it,
+        // and persist the connection.
+        const waba_info = value.waba_info;
+
+        if (!waba_info) {
+          log.warn("PARTNER_ADDED without waba_info", value);
+          continue;
+        }
+
+        const {
+          waba_id: partner_waba_id,
+          owner_business_id,
+          solution_id,
+        } = waba_info;
+
+        if (!solution_id || !owner_business_id) {
+          log.warn(
+            "PARTNER_ADDED: missing solution_id or owner_business_id",
+            { waba_info },
+          );
+          continue;
+        }
+
+        log.info("PARTNER_ADDED event received", {
+          waba_id: partner_waba_id,
+          owner_business_id,
+          solution_id,
+        });
+
+        // Idempotency: skip if this WABA is already connected (e.g. the
+        // register path or a duplicate webhook already created it).
+        const { data: existing } = await client
+          .from("organizations_addresses")
+          .select("organization_id")
+          .eq("extra->>waba_id", partner_waba_id)
+          .maybeSingle()
+          .throwOnError();
+
+        if (existing?.organization_id) {
+          log.info("PARTNER_ADDED: WABA already connected, skipping", {
+            waba_id: partner_waba_id,
+            organization_id: existing.organization_id,
+          });
+          continue;
+        }
+
+        // Resolve the reseller org from the solution.
+        const { data: solution } = await client
+          .from("partner_solutions")
+          .select("partner_organization_id")
+          .eq("solution_id", solution_id)
+          .maybeSingle();
+
+        if (!solution?.partner_organization_id) {
+          log.error("PARTNER_ADDED: no partner_solutions row for solution_id", {
+            solution_id,
+            waba_id: partner_waba_id,
+          });
+          continue;
+        }
+
+        // Fetch the client's business token via the MPS endpoint.
+        const systemToken = Deno.env.get(
+          "SOLUTION_PARTNER_SYSTEM_USER_TOKEN",
+        );
+
+        if (!systemToken) {
+          log.error(
+            "PARTNER_ADDED: SOLUTION_PARTNER_SYSTEM_USER_TOKEN not set",
+            { waba_id: partner_waba_id },
+          );
+          continue;
+        }
+
+        const tokenResponse = await fetch(
+          `https://graph.facebook.com/${API_VERSION}/${solution_id}/access_token?business_id=${owner_business_id}`,
+          { headers: { Authorization: `Bearer ${systemToken}` } },
+        );
+
+        if (!tokenResponse.ok) {
+          log.error("PARTNER_ADDED: could not fetch business token", {
+            status: tokenResponse.status,
+            waba_id: partner_waba_id,
+          });
+          continue;
+        }
+
+        const tokenData = (await tokenResponse.json()) as {
+          data: [{ access_token: string }];
+        };
+        const business_token = tokenData.data[0]?.access_token;
+
+        if (!business_token) {
+          log.error("PARTNER_ADDED: empty business token", {
+            waba_id: partner_waba_id,
+          });
+          continue;
+        }
+
+        // The webhook doesn't carry phone_number_id; fetch it from the WABA.
+        const phoneNumbersResponse = await fetch(
+          `https://graph.facebook.com/${API_VERSION}/${partner_waba_id}/phone_numbers`,
+          { headers: { Authorization: `Bearer ${business_token}` } },
+        );
+
+        if (!phoneNumbersResponse.ok) {
+          log.error("PARTNER_ADDED: could not fetch phone numbers", {
+            status: phoneNumbersResponse.status,
+            waba_id: partner_waba_id,
+          });
+          continue;
+        }
+
+        const phoneNumbers = (await phoneNumbersResponse.json()) as {
+          data: [{ id: string; display_phone_number: string }];
+        };
+        const phone_number_id = phoneNumbers.data[0]?.id;
+
+        if (!phone_number_id) {
+          log.error("PARTNER_ADDED: WABA has no phone numbers", {
+            waba_id: partner_waba_id,
+          });
+          continue;
+        }
+
+        // Auto-create the client org under the reseller.
+        const { data: org, error: orgError } = await client
+          .from("organizations")
+          .insert({
+            name: `Client ${partner_waba_id}`,
+            partner_id: solution.partner_organization_id,
+          })
+          .select("id")
+          .single();
+
+        if (orgError || !org?.id) {
+          log.error("PARTNER_ADDED: could not create client org", {
+            waba_id: partner_waba_id,
+            error: orgError,
+          });
+          continue;
+        }
+
+        // Persist the connection, tagged with solution_id.
+        await client
+          .from("organizations_addresses")
+          .upsert({
+            service: "whatsapp",
+            address: phone_number_id,
+            organization_id: org.id,
+            status: "connected",
+            extra: {
+              waba_id: partner_waba_id,
+              business_id: owner_business_id,
+              solution_id,
+              access_token: business_token,
+            },
+          })
+          .throwOnError();
+
+        // Subscribe the WABA to message webhooks.
+        await fetch(
+          `https://graph.facebook.com/${API_VERSION}/${partner_waba_id}/subscribed_apps`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${business_token}` },
+          },
+        );
+
+        log.info("PARTNER_ADDED: connection persisted", {
+          waba_id: partner_waba_id,
+          phone_number_id,
+          organization_id: org.id,
+          solution_id,
+        });
+
+        continue;
+      }
+
       if (field === "account_update") {
         // Query directly since account_update events do not populate orgAddressMap
         const { data: address } = await client
