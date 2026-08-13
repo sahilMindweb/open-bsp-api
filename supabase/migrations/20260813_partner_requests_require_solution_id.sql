@@ -1,31 +1,16 @@
--- Enforce that an approved partner request must have a solution_id.
--- Defense-in-depth: the admin UI now requires it too, but the DB must not
--- allow an approved request with an empty/blank solution ID.
+-- Require non-null, non-empty solution_id when status is 'approved'
+-- and reset status back to pending in database if approved without solution_id.
 
--- Reject any update/insert where status='approved' and solution_id is blank.
-create or replace function public.enforce_partner_request_solution_id() returns trigger
-language plpgsql
-set search_path to ''
-as $$
-begin
-  if new.status = 'approved' and (
-    new.solution_id is null
-    or length(trim(new.solution_id)) = 0
-  ) then
-    raise exception 'Approved partner requests must include a solution_id';
-  end if;
+alter table public.partner_requests
+drop constraint if exists partner_requests_approved_solution_id_check;
 
-  -- Cleaner: a rejected request should not carry a solution_id.
-  if new.status = 'rejected' and new.solution_id is not null then
-    new.solution_id := null;
-  end if;
+alter table public.partner_requests
+add constraint partner_requests_approved_solution_id_check
+check (
+  status != 'approved' or (solution_id is not null and length(trim(solution_id)) > 0)
+);
 
-  return new;
-end;
-$$;
-
-create trigger enforce_partner_request_solution_id
-before insert or update
-on public.partner_requests
-for each row
-execute function public.enforce_partner_request_solution_id();
+-- Fix any existing invalid approvals in database
+update public.partner_requests
+set status = 'pending', solution_id = null
+where status = 'approved' and (solution_id is null or length(trim(solution_id)) = 0);
