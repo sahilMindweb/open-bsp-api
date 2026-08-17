@@ -20,6 +20,8 @@ begin
 end;
 $$;
 
+drop trigger if exists prevent_duplicate_app_id_on_partner_request on public.partner_requests;
+
 create trigger prevent_duplicate_app_id_on_partner_request
 before insert
 on public.partner_requests

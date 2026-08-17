@@ -3,6 +3,7 @@
 -- 2. Helper function: get_partner_clients() -> the parent's sub-tenants + connection status
 
 -- Allow members of the parent org to read sub-tenant orgs (read-only).
+drop policy if exists "parent org members can read sub-tenants" on public.organizations;
 create policy "parent org members can read sub-tenants"
 on public.organizations
 for select

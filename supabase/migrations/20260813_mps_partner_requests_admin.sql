@@ -5,7 +5,7 @@
 --    admin (scoped admin panel: WhatsApp oversight + partner request review).
 -- 3. RLS: partner can read/update own request; admins can read all + issue.
 
-create table public.partner_requests (
+create table if not exists public.partner_requests (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations(id),
   app_id text not null,
@@ -15,9 +15,11 @@ create table public.partner_requests (
   updated_at timestamptz not null default now()
 );
 
+drop index if exists partner_requests_organization_id_idx;
 create index partner_requests_organization_id_idx
 on public.partner_requests (organization_id);
 
+drop trigger if exists set_updated_at on public.partner_requests;
 create trigger set_updated_at
 before update
 on public.partner_requests
@@ -46,6 +48,7 @@ grant execute on function public.is_platform_admin() to anon, authenticated, ser
 alter table public.partner_requests enable row level security;
 
 -- Partner (org member) can read their own requests
+drop policy if exists "members can read their org partner requests" on public.partner_requests;
 create policy "members can read their org partner requests"
 on public.partner_requests
 for select
@@ -55,6 +58,7 @@ using (
 );
 
 -- Partner (owner/admin of the org) can create a request
+drop policy if exists "owners can create partner requests" on public.partner_requests;
 create policy "owners can create partner requests"
 on public.partner_requests
 for insert
@@ -64,6 +68,7 @@ with check (
 );
 
 -- Platform admins can read all requests
+drop policy if exists "platform admins can read all partner requests" on public.partner_requests;
 create policy "platform admins can read all partner requests"
 on public.partner_requests
 for select
@@ -73,6 +78,7 @@ using (
 );
 
 -- Platform admins can update requests (approve/reject/issue solution id)
+drop policy if exists "platform admins can update partner requests" on public.partner_requests;
 create policy "platform admins can update partner requests"
 on public.partner_requests
 for update

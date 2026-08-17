@@ -18,6 +18,8 @@ begin
 end;
 $$;
 
+drop trigger if exists sync_partner_solution_on_approval on public.partner_requests;
+
 create trigger sync_partner_solution_on_approval
 after insert or update of status, solution_id
 on public.partner_requests

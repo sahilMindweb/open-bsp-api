@@ -28,6 +28,8 @@ begin
 end;
 $$;
 
+drop trigger if exists set_agent_email on public.agents;
+
 create trigger set_agent_email
 before insert or update of user_id
 on public.agents

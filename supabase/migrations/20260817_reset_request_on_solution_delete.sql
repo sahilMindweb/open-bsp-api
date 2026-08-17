@@ -15,6 +15,8 @@ begin
 end;
 $$;
 
+drop trigger if exists reset_partner_request_on_solution_delete on public.partner_solutions;
+
 create trigger reset_partner_request_on_solution_delete
 after delete
 on public.partner_solutions
