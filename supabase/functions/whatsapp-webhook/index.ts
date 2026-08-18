@@ -675,6 +675,31 @@ async function processMessage(request: Request): Promise<Response> {
           continue;
         }
 
+        // Register the phone number (same step as the direct embedded-signup
+        // flow) so the number is properly registered on the Cloud API.
+        const registerResponse = await fetch(
+          `https://graph.facebook.com/${API_VERSION}/${phone_number_id}/register`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${business_token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              messaging_product: "whatsapp",
+              pin: "123456",
+            }),
+          },
+        );
+
+        if (!registerResponse.ok) {
+          log.error("PARTNER_ADDED: could not register phone number", {
+            status: registerResponse.status,
+            waba_id: partner_waba_id,
+          });
+          continue;
+        }
+
         // Auto-create the client org under the reseller.
         const { data: org, error: orgError } = await client
           .from("organizations")

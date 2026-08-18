@@ -205,6 +205,8 @@ export type WebhookAccountUpdate_Partner = {
   waba_info: {
     waba_id: string;
     owner_business_id: string;
+    solution_id?: string;
+    solution_partner_business_ids?: string[];
   };
 };
 
